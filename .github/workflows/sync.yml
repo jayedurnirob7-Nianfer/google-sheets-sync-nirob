@@ -37,7 +37,10 @@ jobs:
           DESTINATION_TAB_NAME: ${{ secrets.DESTINATION_TAB_NAME || 'Synced Data' }}
           LOG_LEVEL: info
         run: node src/index.js --once
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with: { name: sync-logs-${{ github.run_number }}, path: logs/, retention-days: 7 }
+- name: Upload logs
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: sync-logs-${{ github.run_number }}
+    path: logs/
+    retention-days: 7
