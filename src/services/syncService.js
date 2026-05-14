@@ -9,7 +9,7 @@ const SOURCE_SHEET_ID = process.env.SOURCE_SHEET_ID;
 const DESTINATION_SHEET_ID = process.env.DESTINATION_SHEET_ID;
 const DESTINATION_TAB_NAME = process.env.DESTINATION_TAB_NAME || 'Synced Data';
 const TARGET_SELLER_NAME = (process.env.TARGET_SELLER_NAME || 'Nirob').toLowerCase();
-const TARGET_STATUSE = (process.env.TARGET_STATUSEP || 'Quoted,Converted').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+const TARGET_STATUS = (process.env.TARGET_STATUS || 'Quoted,Converted').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 function findColumn(headers, aliases) {
   const lw = aliases.map(a => a.toLowerCase());
@@ -20,7 +20,7 @@ function rowMatchesFilter(rowData, sellerCol, statusCol) {
   if (!sellerCol || !statusCol) return false;
   const seller = normalise(rowData[sellerCol]);
   const status = normalise(rowData[statusCol]);
-  return seller === TARGET_SELLER_NAME && TARGET_STATUSEM.some(t => status.includes(t));
+  return seller === TARGET_SELLER_NAME && TARGET_STATUS.some(t => status.includes(t));
 }
 
 function buildDestHeaders(srcHeaders) {
