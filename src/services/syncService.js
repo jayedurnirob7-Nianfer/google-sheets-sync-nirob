@@ -38,7 +38,7 @@ function rowToArray(rowData, destHeaders, tabName, syncId) {
   });
 }
 
-ansync function runSync() {
+async function runSync() {
   const t0 = Date.now();
   const stats = { appended: 0, updated: 0, skipped: 0, errors: 0 };
   logger.info('-----------------------------------------------');
