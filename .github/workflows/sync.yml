@@ -1,4 +1,5 @@
 name: Google Sheets Auto-Sync
+
 on:
   schedule:
     - cron: '*/5 * * * *'
@@ -6,26 +7,38 @@ on:
   workflow_dispatch:
 
   push:
-    branches: [main]
-    paths: ['src/**', 'package.json']
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'package.json'
+
 concurrency:
   group: sync
   cancel-in-progress: false
+
 jobs:
   sync:
     name: Sync Google Sheets
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Node.js
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm' }
-      - name: Install
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
         run: npm ci
-      - name: Make logs dir
+
+      - name: Make logs directory
         run: mkdir -p logs
+
       - name: Run Sync
         env:
           SOURCE_SHEET_ID: ${{ secrets.SOURCE_SHEET_ID }}
@@ -33,14 +46,15 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           TARGET_SELLER_NAME: ${{ secrets.TARGET_SELLER_NAME || 'Nirob' }}
-          TARGET_STATUSEX: ${{ secrets.TARGET_STATUSEP || 'Quoted,Converted' }}
+          TARGET_STATUSEX: ${{ secrets.TARGET_STATUSEX || 'Quoted,Converted' }}
           DESTINATION_TAB_NAME: ${{ secrets.DESTINATION_TAB_NAME || 'Synced Data' }}
           LOG_LEVEL: info
         run: node src/index.js --once
-- name: Upload logs
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: sync-logs-${{ github.run_number }}
-    path: logs/
-    retention-days: 7
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 7
