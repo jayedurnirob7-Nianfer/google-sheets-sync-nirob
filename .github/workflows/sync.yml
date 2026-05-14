@@ -2,7 +2,9 @@ name: Google Sheets Auto-Sync
 on:
   schedule:
     - cron: '*/5 * * * *'
-  workflow_dispatch: }
+
+  workflow_dispatch:
+
   push:
     branches: [main]
     paths: ['src/**', 'package.json']
