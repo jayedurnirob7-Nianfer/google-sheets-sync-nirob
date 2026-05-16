@@ -44,7 +44,32 @@ function rowToArray(rowData, destHeaders, tabName, syncId) {
   });
 }
 
-// Batch-apply colors to multiple rows in one API call
+// Apply color to a single row immediately (used for newly inserted rows)
+async function applyRowColor(sheetsClient, sheetId, rowIndex, profileName, colorMap) {
+  if (!sheetId || !profileName) return;
+  const hex = getColor(profileName, colorMap);
+  const rgb = hexToSheetsRgb(hex);
+  await sheetsClient.spreadsheets.batchUpdate({
+    spreadsheetId: DESTINATION_SHEET_ID,
+    requestBody: {
+      requests: [{
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex:    rowIndex - 1, // Sheets API is 0-indexed
+            endRowIndex:      rowIndex,
+            startColumnIndex: 0,
+            endColumnIndex:   20,
+          },
+          cell:   { userEnteredFormat: { backgroundColor: rgb } },
+          fields: 'userEnteredFormat.backgroundColor',
+        },
+      }],
+    },
+  });
+}
+
+// Batch-apply colors to multiple rows in one API call (used for updated rows)
 async function applyAllRowColors(sheetsClient, sheetId, rowColorPairs, colorMap) {
   if (!sheetId || !rowColorPairs.length) return;
   const requests = rowColorPairs.map(({ rowIndex, profileName }) => {
@@ -54,20 +79,19 @@ async function applyAllRowColors(sheetsClient, sheetId, rowColorPairs, colorMap)
       repeatCell: {
         range: {
           sheetId,
-          startRowIndex:    rowIndex - 1,  // Sheets API is 0-indexed
+          startRowIndex:    rowIndex - 1, // Sheets API is 0-indexed
           endRowIndex:      rowIndex,
           startColumnIndex: 0,
-          endColumnIndex:   20
+          endColumnIndex:   20,
         },
-        cell: { userEnteredFormat: { backgroundColor: rgb } },
-        fields: 'userEnteredFormat.backgroundColor'
-      }
+        cell:   { userEnteredFormat: { backgroundColor: rgb } },
+        fields: 'userEnteredFormat.backgroundColor',
+      },
     };
   });
-
   await sheetsClient.spreadsheets.batchUpdate({
     spreadsheetId: DESTINATION_SHEET_ID,
-    requestBody: { requests }
+    requestBody: { requests },
   });
 }
 
@@ -75,11 +99,16 @@ async function runSync() {
   const t0    = Date.now();
   const stats = { appended: 0, updated: 0, skipped: 0, errors: 0 };
 
+  // Tracks how many rows were inserted at the top this cycle.
+  // Each insert shifts ALL existing rows down by 1, so we add this
+  // offset when updating a previously synced row.
+  let insertedCount = 0;
+
   logger.info('-----------------------------------------------');
   logger.info('Starting sync cycle');
   if (!SOURCE_SHEET_ID || !DESTINATION_SHEET_ID) throw new Error('Missing sheet IDs');
 
-  // Get sheetId for color formatting
+  // Get numeric sheetId and color map for formatting
   const sheetsClient = getSheetsClient();
   const meta         = await sheetsClient.spreadsheets.get({ spreadsheetId: DESTINATION_SHEET_ID });
   const sheetMeta    = meta.data.sheets.find(s => s.properties.title === DESTINATION_TAB_NAME);
@@ -130,45 +159,72 @@ async function runSync() {
   const profileColIdx   = resolvedHeaders.indexOf('Profile Name');
 
   const freshMap      = new Map();
-  const rowColorPairs = []; // collect all rows needing color — batch at end
+  const rowColorPairs = []; // collect updated rows for batch color — applied at end
 
   destState.rows.forEach(r => { if (r.syncId) freshMap.set(r.syncId, r); });
 
   for (const { syncId, tabName, data } of matches) {
     const values      = rowToArray(data, resolvedHeaders, tabName, syncId);
     const profileName = profileColIdx >= 0 ? (values[profileColIdx] || '') : '';
+
     try {
       if (freshMap.has(syncId)) {
-        const exr     = freshMap.get(syncId);
-        const changed = values.some((v, i) =>
+        // ── UPDATE existing row ────────────────────────────────────────────
+        // exr.rowIndex is from BEFORE this cycle's inserts.
+        // Each top-insert shifts rows down by 1, so we add insertedCount.
+        const exr          = freshMap.get(syncId);
+        const adjustedRow  = exr.rowIndex + insertedCount;
+        const changed      = values.some((v, i) =>
           resolvedHeaders[i] !== '_last_synced' && v !== (exr.data[i] || '')
         );
+
         if (changed) {
-          await sheetsService.updateRow(DESTINATION_SHEET_ID, DESTINATION_TAB_NAME, exr.rowIndex, values);
-          rowColorPairs.push({ rowIndex: exr.rowIndex, profileName });
+          await sheetsService.updateRow(
+            DESTINATION_SHEET_ID, DESTINATION_TAB_NAME, adjustedRow, values
+          );
+          // Collect for batch color at end (no more inserts will affect this index)
+          rowColorPairs.push({ rowIndex: adjustedRow, profileName });
           stats.updated++;
-          logger.info('UPDATE: ' + syncId.substring(0, 8));
+          logger.info('UPDATE row ' + adjustedRow + ': ' + syncId.substring(0, 8));
         } else {
           stats.skipped++;
         }
+
       } else {
-        await sheetsService.appendRow(DESTINATION_SHEET_ID, DESTINATION_TAB_NAME, values);
-        const newRowIndex = destState.rows.length + 2 + stats.appended;
-        freshMap.set(syncId, { syncId, rowIndex: newRowIndex, data: values });
-        rowColorPairs.push({ rowIndex: newRowIndex, profileName });
+        // ── INSERT new row at top (row 2, right after header) ─────────────
+        // Color must be applied IMMEDIATELY while the row is still at row 2,
+        // because the NEXT insert will push it down to row 3, then 4, etc.
+        await sheetsService.insertRowAtTop(
+          DESTINATION_SHEET_ID, DESTINATION_TAB_NAME, values
+        );
+
+        // Color the new row right now — it is at row 2 at this exact moment
+        await applyRowColor(sheetsClient, sheetId, 2, profileName, colorMap);
+
+        // Record in map (row 2 for now; future inserts will shift it, but
+        // we only need this for detecting duplicates — not for positioning)
+        freshMap.set(syncId, { syncId, rowIndex: 2, data: values });
+        insertedCount++;
         stats.appended++;
-        logger.info('APPEND: ' + syncId.substring(0, 8));
+        logger.info('INSERT top (row 2): ' + syncId.substring(0, 8));
       }
-    } catch (e) { logger.error('Error: ' + e.message); stats.errors++; }
+
+    } catch (e) {
+      logger.error('Error: ' + e.message);
+      stats.errors++;
+    }
   }
 
-  // Apply all colors in one single API call
+  // Apply colors for all UPDATED rows in one single API call
   if (rowColorPairs.length) {
     await applyAllRowColors(sheetsClient, sheetId, rowColorPairs, colorMap);
-    logger.info('Colors applied to ' + rowColorPairs.length + ' rows');
+    logger.info('Colors applied to ' + rowColorPairs.length + ' updated rows');
   }
 
-  logger.info('Sync done in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's | ' + JSON.stringify(stats));
+  logger.info(
+    'Sync done in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's | ' +
+    JSON.stringify(stats)
+  );
   return stats;
 }
 
