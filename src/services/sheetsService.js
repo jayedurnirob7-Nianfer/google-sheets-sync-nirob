@@ -157,19 +157,48 @@ async function writeDestinationHeaders(
   });
 }
 
-async function appendRow(
-  spreadsheetId,
-  tabName,
-  rowValues
-) {
-  await getClient().spreadsheets.values.append({
+// ── Get the numeric sheetId needed for insertDimension ────────────────────
+async function getSheetNumericId(spreadsheetId, tabName) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.get({
     spreadsheetId,
-    range: tabName,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
+    fields: 'sheets.properties',
+  });
+  const sheet = res.data.sheets.find(s => s.properties.title === tabName);
+  if (!sheet) throw new Error(`Tab "${tabName}" not found in spreadsheet`);
+  return sheet.properties.sheetId;
+}
+
+// ── Insert a new row at the TOP (row 2, right after the header) ───────────
+// This keeps the newest data visible first without scrolling down.
+async function insertRowAtTop(spreadsheetId, tabName, rowValues) {
+  const sheets  = getClient();
+  const sheetId = await getSheetNumericId(spreadsheetId, tabName);
+
+  // Step 1: Insert one blank row at index 1 (0=header, 1=first data row)
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
     requestBody: {
-      values: [rowValues]
-    }
+      requests: [{
+        insertDimension: {
+          range: {
+            sheetId,
+            dimension:  'ROWS',
+            startIndex: 1,   // right after the header row
+            endIndex:   2,
+          },
+          inheritFromBefore: false,
+        },
+      }],
+    },
+  });
+
+  // Step 2: Write the actual data into the newly created row 2
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range:            `'${tabName}'!A2`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [rowValues] },
   });
 }
 
