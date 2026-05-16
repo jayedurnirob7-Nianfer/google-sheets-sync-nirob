@@ -224,6 +224,6 @@ module.exports = {
   readDestinationRows,
   ensureDestinationTab,
   writeDestinationHeaders,
-  appendRow,
-  updateRow
+  insertRowAtTop,       // ← add this
+  updateRow,
 };
